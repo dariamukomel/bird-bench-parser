@@ -7,12 +7,9 @@ from pathlib import Path
 import argparse
 from urllib.parse import urlparse
 from huggingface_hub import hf_hub_download
-import os
 from pathvalidate import sanitize_filename
 import logging
 
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-HF_TOKEN = os.getenv("HF_TOKEN")
 
 logger = logging.getLogger("bird_bench_parser")
 
@@ -59,21 +56,19 @@ def get_model(tag : Tag) -> str:
 def download_github_readme(url: str, file_path: Path, session: requests.Session) -> None:
     p = urlparse(url)
     owner, repo = p.path.strip("/").split("/")[:2]
-    api = f"https://api.github.com/repos/{owner}/{repo}/readme"
 
-    headers = {"Accept": "application/vnd.github+json"}
-    if GITHUB_TOKEN:
-        headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
+    for branch in ("main", "master", "dev"):
+        for name in ("README.md", "readme.md", "Readme.md", "README.txt", "readme.txt", "Readme.txt"):
+            raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{name}"
+            r = session.get(raw_url, timeout=30)
+            if r.status_code == 200:
+                file_path.write_bytes(r.content)
+                return
+            if r.status_code != 404:
+                r.raise_for_status()
 
-    api_r = session.get(api, headers=headers, timeout=30)
-    api_r.raise_for_status()
+    raise requests.HTTPError(f"README name or default branch not found")
 
-    raw_readme_url = api_r.json()["download_url"]
-
-    r = session.get(raw_readme_url, timeout=30)
-    r.raise_for_status()
-
-    file_path.write_bytes(r.content)
 
 
 def download_hf_readme(url: str, file_path: Path) -> None:
@@ -84,7 +79,6 @@ def download_hf_readme(url: str, file_path: Path) -> None:
     hf_hub_download(
         repo_id=repo_id,
         filename="README.md",
-        token=HF_TOKEN,
         local_dir=file_path.parent
     )
 
@@ -99,7 +93,10 @@ def find_table_rows(content: BeautifulSoup) -> list[Tag]:
     for card in tab_container.find_all("div", class_="card card-outline-secondary"):
         header = card.find("div", class_="card-header")
         if header.text.strip() == "Leaderboard - Execution Accuracy (EX)":
-            return card.find("tbody").find_all("tr")
+            rows = card.find("tbody").find_all("tr")
+            if len(rows) <= 1:
+                raise RuntimeError('Leaderboard - Execution Accuracy (EX) table has no rows')
+            return rows
 
     raise RuntimeError('Can\'t find "Leaderboard - Execution Accuracy (EX)" table')
 
@@ -114,7 +111,7 @@ def parse_row(pos: int, row: Tag) -> dict[str, Any]:
     item["code_url"] = get_url(tds[2])
     item["paper_path"] = None
     item["code_path"] = None
-    item["oracle_knowledge"] = True if tds[4].get_text() else False
+    item["oracle_knowledge"] = tds[4].text.strip() == "✔️"
     item["dev"] = get_percent(tds[5])
     item["test"] = get_percent(tds[6])
     return item
@@ -157,7 +154,7 @@ def download_readme(item: dict, readme_dir: Path, session: requests.Session) -> 
         except requests.RequestException as e:
             logger.warning("[pos=%s] Github download failed: %s", item.get("position"), e)
 
-    if "huggingface" in code_url:
+    elif "huggingface" in code_url:
         try:
             download_hf_readme(code_url, file_path)
             item["code_path"] = str(file_path)
