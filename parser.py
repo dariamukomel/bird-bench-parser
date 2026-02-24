@@ -57,18 +57,24 @@ def download_github_readme(url: str, file_path: Path, session: requests.Session)
     p = urlparse(url)
     owner, repo = p.path.strip("/").split("/")[:2]
 
-    for branch in ("main", "master", "dev"):
-        for name in ("README.md", "readme.md", "Readme.md", "README.txt", "readme.txt", "Readme.txt"):
-            raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{name}"
-            r = session.get(raw_url, timeout=30)
-            if r.status_code == 200:
-                file_path.write_bytes(r.content)
-                return
-            if r.status_code != 404:
-                r.raise_for_status()
+    for name in ("README.md", "README.rst", "README", ".github/README.md", "docs/README.md"):
+        raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/HEAD/{name}"
+        r = session.get(raw_url, timeout=30)
+        if r.status_code == 200:
+            file_path.write_bytes(r.content)
+            return
+        if r.status_code != 404:
+            r.raise_for_status()
 
-    raise requests.HTTPError(f"README name or default branch not found")
+    api = f"https://api.github.com/repos/{owner}/{repo}/readme"
+    api_r = session.get(api, headers={"Accept": "application/vnd.github+json"}, timeout=30)
+    api_r.raise_for_status()
 
+    raw_readme_url = api_r.json()["download_url"]
+    r = session.get(raw_readme_url, timeout=30)
+    r.raise_for_status()
+
+    file_path.write_bytes(r.content)
 
 
 def download_hf_readme(url: str, file_path: Path) -> None:
