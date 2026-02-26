@@ -190,13 +190,13 @@ def main():
 
     with requests.Session() as session:
         if not args.no_download_papers:
-            paper_dir = Path(args.papers_path)
+            paper_dir = args.papers_path
             paper_dir.mkdir(parents=True, exist_ok=True)
             for item in items:
                 download_paper(item, paper_dir, session)
 
         if not args.no_download_readmes:
-            readme_dir = Path(args.readmes_path)
+            readme_dir = args.readmes_path
             readme_dir.mkdir(parents=True, exist_ok=True)
             for item in items:
                 download_readme(item, readme_dir, session)
